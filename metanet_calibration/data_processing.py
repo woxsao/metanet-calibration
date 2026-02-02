@@ -304,101 +304,6 @@ def form_csv(
     print(f"CSV file saved as {output_filename}")
 
 
-def plot_matrices(
-    flow_matrix,
-    density_matrix,
-    time_increment,
-    space_increment,
-    t_min,
-    t_max,
-    x_min,
-    x_max,
-):
-    """
-    Plot a heatmap of the flow and density matrices, as well as the speed matrix obtained by dividing the flow by the density.
-
-    Parameters:
-    flow_matrix (np.ndarray): Flow matrix.
-    density_matrix (np.ndarray): Density matrix.
-    time_increment (pd.Timedelta): Time interval.
-    space_increment (float): Space interval.
-    t_min (pd.Timestamp): Minimum timestamp.
-    t_max (pd.Timestamp): Maximum timestamp.
-    x_min (float): Minimum x_position.
-    x_max (float): Maximum x_position.
-
-    Returns:
-    None
-    """
-    plt.figure(figsize=(12, 12))
-
-    # Compute reasonable tick marks
-    num_time_bins = flow_matrix.shape[0]
-    num_space_bins = flow_matrix.shape[1]
-
-    time_ticks = np.linspace(0, num_time_bins - 1, min(10, num_time_bins)).astype(int)
-    space_ticks = np.linspace(0, num_space_bins - 1, min(10, num_space_bins)).astype(
-        int
-    )
-
-    time_labels = [(t_min + i * time_increment).strftime("%H:%M") for i in time_ticks]
-    space_labels = [int(x_min + i * space_increment) for i in space_ticks]
-
-    # Create heatmap for flow matrix
-    ax1 = plt.subplot(2, 2, 1)
-    sns.heatmap(
-        flow_matrix.T,
-        cmap="RdYlGn",
-        xticklabels=time_labels,
-        yticklabels=space_labels[::-1],
-        cbar_kws={"label": "Flow (veh/hr)"},
-    )
-    plt.title(
-        f"Time-Space Diagram of Vehicle Flow\n{time_increment} time increments, {space_increment} meters"
-    )
-    plt.xlabel("Time")
-    plt.ylabel("Space (meters)")
-    plt.xticks(time_ticks, time_labels, rotation=45)
-    plt.yticks(space_ticks, space_labels)
-    # ax1.invert_yaxis()  # Reverse the y-axis
-
-    # Plot the speed matrix
-    ax2 = plt.subplot(2, 2, 2)
-    sns.heatmap(
-        density_matrix.T,
-        cmap="RdYlGn",
-        xticklabels=time_labels,
-        yticklabels=space_labels[::-1],
-        cbar_kws={"label": "Average Density (veh/km)"},
-    )
-    plt.title(
-        f"Time-Space Diagram of Vehicle Density\n{time_increment} time increments, {space_increment} meters"
-    )
-    plt.xlabel("Time")
-    plt.ylabel("Space (meters)")
-    plt.xticks(time_ticks, time_labels, rotation=45)
-    plt.yticks(space_ticks, space_labels)
-    # ax2.invert_yaxis()  # Reverse the y-axis
-
-    ax3 = plt.subplot(2, 2, 3)
-    sns.heatmap(
-        flow_matrix.T / density_matrix.T,
-        cmap="RdYlGn",
-        xticklabels=time_labels,
-        yticklabels=space_labels[::-1],
-        cbar_kws={"label": "Speed (km/h)"},
-    )
-    plt.title(
-        f"Time-Space Diagram of Vehicle Speed\n{time_increment} time increments, {space_increment} meters"
-    )
-    plt.xlabel("Time")
-    plt.ylabel("Space (meters)")
-    plt.xticks(time_ticks, time_labels, rotation=45)
-    plt.yticks(space_ticks, space_labels)
-
-    # Adjust layout and show the plots
-    plt.tight_layout()
-    plt.show()
 
 def get_ramps_per_segment(ramps_path, space_interval=400, direction="west",
                           min_pos=None, max_pos=None):
@@ -496,3 +401,139 @@ def get_lanes_per_segment(lanes_path, space_interval=400, direction="west",
         bin_midpoints_m = bin_midpoints_m[::-1]
 
     return lanes_per_bin, space_bins, bin_midpoints_m
+
+
+def plot_simulation_comparison(rho_sim, v_sim, rho_true, v_true, q_true=None, include_fd=True, save_path=None, lanes=None):
+    """
+    Plot side-by-side comparison of simulated vs ground truth traffic states.
+    Uses PREDICTED values for color scale (vmin/vmax) to make differences more visible.
+    
+    Args:
+        rho_sim: Simulated density (time_steps, num_segments) - TOTAL density
+        v_sim: Simulated velocity (time_steps, num_segments)
+        rho_true: Ground truth density (time_steps, num_segments) - TOTAL density
+        v_true: Ground truth velocity (time_steps, num_segments)
+        q_true: Ground truth flow (time_steps, num_segments), optional
+        include_fd: If True, add fundamental diagram plot at bottom
+        save_path: Path to save figure
+        lanes: Array of lanes per segment (needed for FD conversion)
+    """
+    # Compute flows
+    q_sim = rho_sim * v_sim
+    if q_true is None:
+        q_true = rho_true * v_true
+    
+    # Create figure
+    if include_fd:
+        fig = plt.figure(figsize=(14, 18))
+        gs = fig.add_gridspec(4, 2, height_ratios=[1, 1, 1, 0.8])
+        axes = [[fig.add_subplot(gs[i, j]) for j in range(2)] for i in range(3)]
+        ax_fd = fig.add_subplot(gs[3, :])
+    else:
+        fig, axes = plt.subplots(3, 2, figsize=(14, 16), sharey='row')
+    
+    # --- Row 1: Velocity ---
+    # USE PREDICTED VALUES FOR COLOR SCALE
+    v_min = v_sim.min()
+    v_max = v_sim.max()
+    
+    im0 = axes[0][0].imshow(
+        v_sim.T, aspect="auto", origin="lower", cmap="RdYlGn", 
+        interpolation="none", vmin=v_min, vmax=v_max
+    )
+    axes[0][0].set_xlabel("Time Step")
+    axes[0][0].set_ylabel("Segment Index")
+    axes[0][0].set_title("Predicted Velocity")
+    fig.colorbar(im0, ax=axes[0][0], label="Velocity (km/h)")
+    
+    im1 = axes[0][1].imshow(
+        v_true.T, aspect="auto", origin="lower", cmap="RdYlGn", 
+        interpolation="none", vmin=v_min, vmax=v_max
+    )
+    axes[0][1].set_xlabel("Time Step")
+    axes[0][1].set_title("Ground Truth Velocity")
+    fig.colorbar(im1, ax=axes[0][1], label="Velocity (km/h)")
+    
+    # --- Row 2: Flow ---
+    # USE PREDICTED VALUES FOR COLOR SCALE
+    q_min = q_sim.min()
+    q_max = q_sim.max()
+    
+    im2 = axes[1][0].imshow(
+        q_sim.T, aspect="auto", origin="lower", cmap="RdYlGn", 
+        interpolation="none", vmin=q_min, vmax=q_max
+    )
+    axes[1][0].set_xlabel("Time Step")
+    axes[1][0].set_ylabel("Segment Index")
+    axes[1][0].set_title("Predicted Flow")
+    fig.colorbar(im2, ax=axes[1][0], label="Flow (veh/h)")
+    
+    im3 = axes[1][1].imshow(
+        q_true.T, aspect="auto", origin="lower", cmap="RdYlGn", 
+        interpolation="none", vmin=q_min, vmax=q_max
+    )
+    axes[1][1].set_xlabel("Time Step")
+    axes[1][1].set_title("Ground Truth Flow")
+    fig.colorbar(im3, ax=axes[1][1], label="Flow (veh/h)")
+    
+    # --- Row 3: Density ---
+    # USE PREDICTED VALUES FOR COLOR SCALE
+    rho_min = rho_sim.min()
+    rho_max = rho_sim.max()
+    
+    im4 = axes[2][0].imshow(
+        rho_sim.T, aspect="auto", origin="lower", cmap="RdYlGn", 
+        interpolation="none", vmin=rho_min, vmax=rho_max
+    )
+    axes[2][0].set_xlabel("Time Step")
+    axes[2][0].set_ylabel("Segment Index")
+    axes[2][0].set_title("Predicted Density")
+    fig.colorbar(im4, ax=axes[2][0], label="Density (veh)")
+    
+    im5 = axes[2][1].imshow(
+        rho_true.T, aspect="auto", origin="lower", cmap="RdYlGn", 
+        interpolation="none", vmin=rho_min, vmax=rho_max
+    )
+    axes[2][1].set_xlabel("Time Step")
+    axes[2][1].set_title("Ground Truth Density")
+    fig.colorbar(im5, ax=axes[2][1], label="Density (veh)")
+    
+    # --- Row 4: Fundamental Diagram ---
+    if include_fd:
+        # CRITICAL FIX: Convert TOTAL density to PER-LANE density for FD plot
+        if lanes is not None:
+            # Expand lanes to match shape
+            num_timesteps, num_segments = rho_sim.shape
+            lanes_expanded_sim = np.tile(lanes, (num_timesteps, 1))
+            lanes_expanded_true = np.tile(lanes, (rho_true.shape[0], 1))
+            
+            # Convert to per-lane density
+            rho_per_lane_sim = rho_sim / lanes_expanded_sim
+            rho_per_lane_true = rho_true / lanes_expanded_true
+            
+            all_rho_pred = rho_per_lane_sim.flatten()
+            all_rho_true = rho_per_lane_true.flatten()
+        else:
+            # Fallback: assume data is already per-lane (but warn)
+            print("WARNING: lanes not provided, assuming density is per-lane")
+            all_rho_pred = rho_sim.flatten()
+            all_rho_true = rho_true.flatten()
+        
+        all_q_pred = q_sim.flatten()
+        all_q_true = q_true.flatten()
+        
+        ax_fd.scatter(all_rho_true, all_q_true, color="gray", alpha=0.7, s=1, label="Data (measured)")
+        ax_fd.scatter(all_rho_pred, all_q_pred, alpha=0.6, s=1, label="Predicted")
+        ax_fd.set_xlabel("Density (veh/lane/km)")
+        ax_fd.set_ylabel("Flow (veh/h)")
+        ax_fd.set_title("Fundamental Diagram: Flow vs. Density (per lane)")
+        ax_fd.legend()
+        ax_fd.grid(True)
+    
+    plt.tight_layout()
+    
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to: {save_path}")
+    
+    plt.show()

@@ -140,19 +140,19 @@ def metanet_param_fit(
     model.v_pred = Var(
         model.t,
         model.i,
-        bounds=(1e-3, 150),
+        bounds=(1e-4, 150),
         initialize={(t, i): float(v_hat[t, i]) for t in model.t for i in model.i},
     )
     model.rho_pred = Var(
         model.t,
         model.i,
-        bounds=(1e-3, 400),
+        bounds=(1e-4, 400),
         initialize={(t, i): float(rho_hat[t, i]) for t in model.t for i in model.i},
     )
     model.q_pred = Var(
         model.t,
         model.i,
-        bounds=(1e-3, 10000),
+        bounds=(1e-4, 10000),
         initialize={(t, i): float(q_hat[t, i]) for t in model.t for i in model.i},
     )
 
@@ -500,7 +500,6 @@ def run_calibration(
         if smoothing:
             initial_flow = smooth_inflow(initial_flow)  # upstream inflow
             downstream_density = smooth_inflow(downstream_density)  # downstream density
-
         # Run calibration for this block
         res_model = metanet_param_fit(
             segment_v_hat,

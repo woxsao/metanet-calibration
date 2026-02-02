@@ -159,9 +159,11 @@ def metanet_step(t: int,
 
     # --- density update ---
     for i in range(num_segments):
-        beta = _get_time_space_param(params["beta"], t if np.ndim(params["beta"]) == 2 else 0, i)
-        r = _get_time_space_param(params["r"], t if np.ndim(params["r"]) == 2 else 0, i)
-
+        beta = _get_time_space_param(params["beta"], t, i) if np.ndim(params["beta"]) == 2 else \
+               (params["beta"][i] if np.ndim(params["beta"]) == 1 else params["beta"])
+        r = _get_time_space_param(params["r"], t, i) if np.ndim(params["r"]) == 2 else \
+            (params["r"][i] if np.ndim(params["r"]) == 1 else params["r"])
+        # print(f"Segment {i}: beta={beta}, r={r}")
         if i == 0:
             inflow = demand[t] if real_data else flow_origin_t
             outflow = density_t[i] * velocity_t[i]
