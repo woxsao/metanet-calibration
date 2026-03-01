@@ -97,10 +97,10 @@ def velocity_dynamics_MN(
         current
         + T / tau * (calculate_V(rho_per_lane, v_ctrl, a, rho_crit, v_free) - current)
         + T / l * current * (prev_state - current)
-        - (
-            ((eta_high * T) * (next_rho_per_lane - rho_per_lane))
-            / (tau * l * (next_rho_per_lane + K))
-        )
+        - (eta_high * T)
+        / (tau * l)
+        * (next_rho_per_lane - rho_per_lane)
+        / (rho_per_lane + K)
     )
 
     # Apply positive floor only for non-Pyomo expressions

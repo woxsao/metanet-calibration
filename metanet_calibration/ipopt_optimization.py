@@ -1,11 +1,9 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from pyomo.environ import (
     ConcreteModel,
     RangeSet,
     Param,
     Var,
-    Expression,
     Objective,
     SolverFactory,
     minimize,
@@ -13,31 +11,30 @@ from pyomo.environ import (
     Constraint,
     ConstraintList,
 )
-import pyomo.environ as pyo
-from .metanet_dynamics import (
-    density_dynamics,
-    calculate_V,
-    velocity_dynamics_MN)
+
+from .metanet_dynamics import density_dynamics, velocity_dynamics_MN
+
 
 def smooth_inflow(inflow, window_size=2):
     # Create averaging kernel
     kernel = np.ones(window_size) / window_size
-    
+
     # Compute asymmetric padding for even window sizes
     pad_left = window_size // 2
     pad_right = window_size - pad_left - 1
 
     # Pad using boundary values (edge padding)
     if inflow.ndim == 1:
-        padded = np.pad(inflow, (pad_left, pad_right), mode='edge')
+        padded = np.pad(inflow, (pad_left, pad_right), mode="edge")
     else:
-        padded = np.pad(inflow, ((pad_left, pad_right), (0, 0)), mode='edge')
+        padded = np.pad(inflow, ((pad_left, pad_right), (0, 0)), mode="edge")
 
     # Convolve along time dimension
     smoothed = np.apply_along_axis(
         lambda m: np.convolve(m, kernel, mode="valid"), axis=0, arr=padded
     )
     return smoothed
+
 
 def metanet_param_fit(
     v_hat,
@@ -49,21 +46,23 @@ def metanet_param_fit(
     downstream_density,
     num_calibrated_segments,
     include_ramping=True,
-    varylanes=True,
+    varylanes=False,
     lane_mapping=None,
     on_ramp_mapping=None,
     off_ramp_mapping=None,
-    time_varying_ramping = False
+    time_varying_ramping=False,
+    bounds=None,
+    initialization=None,
 ):
     initial_flow_or = initial_traffic_state
-    
+
     if initial_flow_or.ndim == 1:
         initial_flow_or = initial_flow_or.reshape(-1, 1)
-    
+
     if downstream_density.ndim == 1:
         downstream_density = downstream_density.reshape(-1, 1)
-    
-     # Ensure no divide-by-zero
+
+    # Ensure no divide-by-zero
 
     num_timesteps, num_segments = v_hat.shape
     print(num_timesteps, num_segments)
@@ -90,37 +89,107 @@ def metanet_param_fit(
     else:
         model.n_lanes = Param(model.i, initialize=4)
 
-    # Parameters to estimate
-    model.eta_high = Var(model.i, bounds=(1.0, 90.0), initialize=30.0)
+    combined_bounds = {
+        "eta_high": (15.0, 60.0),
+        "tau": (15.0 / 3600, 60.0 / 3600),
+        "K": (5.0, 60.0),
+        "rho_crit": (15, 100),
+        "v_free": (110, 150),
+        "a": (0.5, 5),
+        "beta": (1e-3, 0.9),
+        "r_inflow": (1e-3, 2000),
+    }
+
+    if bounds is not None:
+        print("Using custom bounds from input")
+        combined_bounds.update(bounds)
+
+    # Default initialization will be the midpoint of the bounds except for beta and r
+    combined_initialization = {
+        "eta_high": np.mean(combined_bounds["eta_high"]),
+        "tau": np.mean(combined_bounds["tau"]),
+        "K": np.mean(combined_bounds["K"]),
+        "rho_crit": np.mean(combined_bounds["rho_crit"]),
+        "v_free": np.mean(combined_bounds["v_free"]),
+        "a": np.mean(combined_bounds["a"]),
+        "beta": 1e-3,
+        "r_inflow": 1e-3,
+    }
+    if initialization is not None:
+        print("Using custom initialization from input")
+        combined_initialization.update(initialization)
+    model.eta_high = Var(
+        model.i,
+        bounds=combined_bounds["eta_high"],
+        initialize=combined_initialization["eta_high"],
+    )
     model.tau = Var(
-        model.i, bounds=(1.0 / 3600, 60.0 / 3600), initialize=18 / 3600
+        model.i,
+        bounds=combined_bounds["tau"],
+        initialize=combined_initialization["tau"],
     )
-    model.K = Var(model.i, bounds=(1.0, 50.0), initialize=40.0)
+    model.K = Var(
+        model.i, bounds=combined_bounds["K"], initialize=combined_initialization["K"]
+    )
     model.rho_crit = Var(
-        model.i, bounds=(1e-2, np.max(rho_hat)), initialize=37.45
+        model.i,
+        bounds=combined_bounds["rho_crit"],
+        initialize=combined_initialization["rho_crit"],
     )
-    model.v_free = Var(model.i, bounds=(50, 150), initialize=120.0)
-    model.a = Var(model.i, bounds=(0.01, 10), initialize=1.4)
+    model.v_free = Var(
+        model.i,
+        bounds=combined_bounds["v_free"],
+        initialize=combined_initialization["v_free"],
+    )
+    model.a = Var(
+        model.i, bounds=combined_bounds["a"], initialize=combined_initialization["a"]
+    )
 
     if include_ramping:
         # model.gamma = Var(model.i, bounds=(0.5, 1.5), initialize=1)
-        model.beta = Var(model.i, bounds=(1e-3, 0.9), initialize=1e-3)
-        model.r_inflow = Var(model.i, bounds=(1e-3, 2000), initialize=1e-3)
+        model.beta = Var(
+            model.i,
+            bounds=combined_bounds["beta"],
+            initialize=combined_initialization["beta"],
+        )
+        model.r_inflow = Var(
+            model.i,
+            bounds=combined_bounds["r_inflow"],
+            initialize=combined_initialization["r_inflow"],
+        )
         if on_ramp_mapping is not None and off_ramp_mapping is not None:
 
             if time_varying_ramping:
-                model.beta = Var(model.t, model.i, bounds=(1e-3, 0.9), initialize ={(t, i): 1e-3 for t in model.t for i in model.i})
-                model.r_inflow = Var(model.t, model.i, bounds=(1e-3, 2000), initialize ={(t, i): 1e-3 for t in model.t for i in model.i})
+                model.beta = Var(
+                    model.t,
+                    model.i,
+                    bounds=combined_bounds["beta"],
+                    initialize={
+                        (t, i): combined_initialization["beta"]
+                        for t in model.t
+                        for i in model.i
+                    },
+                )
+                model.r_inflow = Var(
+                    model.t,
+                    model.i,
+                    bounds=combined_bounds["r_inflow"],
+                    initialize={
+                        (t, i): combined_initialization["beta"]
+                        for t in model.t
+                        for i in model.i
+                    },
+                )
                 for t in model.t:
                     for i in model.i:
                         if on_ramp_mapping[i] == 0:
-                            model.r_inflow[t,i].setlb(0.0)
-                            model.r_inflow[t,i].setub(0.0)
+                            model.r_inflow[t, i].setlb(0.0)
+                            model.r_inflow[t, i].setub(0.0)
                         if off_ramp_mapping[i] == 0:
-                            model.beta[t,i].setlb(0.0)
-                            model.beta[t,i].setub(0.0)
+                            model.beta[t, i].setlb(0.0)
+                            model.beta[t, i].setub(0.0)
 
-            else: # set bounds based on mappings
+            else:  # set bounds based on mappings
                 for i in model.i:
                     if on_ramp_mapping[i] == 0:
                         model.r_inflow[i].setlb(0.0)
@@ -223,8 +292,8 @@ def metanet_param_fit(
                     outflow,
                     model.T,
                     model.l,
-                    model.beta[t-1,i],
-                    model.r_inflow[t-1,i],
+                    model.beta[t - 1, i],
+                    model.r_inflow[t - 1, i],
                 )
             else:
                 return m.rho_pred[t, i] == density_dynamics(
@@ -278,23 +347,23 @@ def metanet_param_fit(
         #     m, current, prev_state, density, next_density, VSL, m.T, m.l, seg
         # )
         args = {
-            'current': current,
-            'prev_state': prev_state,
-            'total_density': density,
-            'next_total_density': next_density,
-            'lanes_current': current_lanes,
-            'lanes_next': next_lanes,
-            'v_ctrl': VSL,
-            'T': m.T,
-            'l': m.l,
-            'eta_high': m.eta_high[i],
-            'K': m.K[i],
-            'tau': m.tau[i],
-            'a': m.a[i],
-            'rho_crit': m.rho_crit[i],
-            'v_free': m.v_free[i],
+            "current": current,
+            "prev_state": prev_state,
+            "total_density": density,
+            "next_total_density": next_density,
+            "lanes_current": current_lanes,
+            "lanes_next": next_lanes,
+            "v_ctrl": VSL,
+            "T": m.T,
+            "l": m.l,
+            "eta_high": m.eta_high[i],
+            "K": m.K[i],
+            "tau": m.tau[i],
+            "a": m.a[i],
+            "rho_crit": m.rho_crit[i],
+            "v_free": m.v_free[i],
         }
-        return m.v_pred[t,i] == velocity_dynamics_MN(**args)
+        return m.v_pred[t, i] == velocity_dynamics_MN(**args)
 
     model.v_dyn = Constraint(model.t, model.i, rule=v_update)
 
@@ -380,10 +449,10 @@ def metanet_param_fit(
     # solver.options["acceptable_tol"] = 1e-9      # early stopping criterion
     # solver.options["acceptable_constr_viol_tol"] = 1e-9
     # solver.options["dual_inf_tol"] = 1e-10       # dual infeasibility tolerance
-    # solver.options["compl_inf_tol"] = 1e-10       
+    # solver.options["compl_inf_tol"] = 1e-10
     solver.options["max_iter"] = 20000
-    solver.options['acceptable_constr_viol_tol'] = 1e-30
-    solver.options['constr_viol_tol'] = 1e-11
+    solver.options["acceptable_constr_viol_tol"] = 1e-30
+    solver.options["constr_viol_tol"] = 1e-15
     # solver.options["dual_inf_tol"] = 1e-11
     # solver.options["acceptable_dual_inf_tol"] = 1e-11
     solver.solve(model, tee=True)
@@ -404,7 +473,9 @@ def run_calibration(
     on_ramp_mapping=None,
     off_ramp_mapping=None,
     smoothing=True,
-    time_varying_ramping = False
+    time_varying_ramping=False,
+    bounds=None,
+    initialization=None,
 ):
     """
     Run METANET parameter calibration with configurable segment grouping.
@@ -443,10 +514,9 @@ def run_calibration(
         "a": [],
         "num_lanes": [],
     }
-        # results["gamma"] = []
+    # results["gamma"] = []
     results["beta"] = []
     results["r_inflow"] = []
-        
 
     n_segments = rho_hat.shape[1]
 
@@ -466,7 +536,9 @@ def run_calibration(
             f"end_segment_exclusive={end_segment_exclusive}, n_segments={n_segments}"
         )
 
-    for start_idx in range(start_segment, end_segment_exclusive, num_calibrated_segments):
+    for start_idx in range(
+        start_segment, end_segment_exclusive, num_calibrated_segments
+    ):
         end_idx = min(start_idx + num_calibrated_segments, end_segment_exclusive)
         # defensive check: ensure the slice is non-empty
         if end_idx <= start_idx:
@@ -482,7 +554,11 @@ def run_calibration(
         segment_q_hat = q_hat[:, start_idx:end_idx]
 
         # safety: if any slice is empty, raise a helpful error
-        if segment_rho_hat.shape[1] == 0 or segment_v_hat.shape[1] == 0 or segment_q_hat.shape[1] == 0:
+        if (
+            segment_rho_hat.shape[1] == 0
+            or segment_v_hat.shape[1] == 0
+            or segment_q_hat.shape[1] == 0
+        ):
             raise ValueError(
                 f"Empty slice for calibration block: start_idx={start_idx}, end_idx={end_idx}, "
                 f"shapes rho_hat={segment_rho_hat.shape}, v_hat={segment_v_hat.shape}, q_hat={segment_q_hat.shape}. "
@@ -494,8 +570,12 @@ def run_calibration(
             initial_flow = sep_boundary_conditions["initial_flow"]
             downstream_density = sep_boundary_conditions["downstream_density"]
         else:
-            initial_flow = q_hat[:, start_idx - 1 : start_idx]  # upstream inflow (one column)
-            downstream_density = rho_hat[:, end_idx : end_idx + 1]  # downstream density (one column)
+            initial_flow = q_hat[
+                :, start_idx - 1 : start_idx
+            ]  # upstream inflow (one column)
+            downstream_density = rho_hat[
+                :, end_idx : end_idx + 1
+            ]  # downstream density (one column)
 
         if smoothing:
             initial_flow = smooth_inflow(initial_flow)  # upstream inflow
@@ -512,10 +592,22 @@ def run_calibration(
             num_calibrated_segments,
             include_ramping=include_ramping,
             varylanes=varylanes,
-            lane_mapping=lane_mapping[start_idx:end_idx] if lane_mapping is not None else None,
-            on_ramp_mapping=on_ramp_mapping[start_idx:end_idx] if on_ramp_mapping is not None else None,
-            off_ramp_mapping=off_ramp_mapping[start_idx:end_idx] if off_ramp_mapping is not None else None,
-            time_varying_ramping = time_varying_ramping
+            lane_mapping=(
+                lane_mapping[start_idx:end_idx] if lane_mapping is not None else None
+            ),
+            on_ramp_mapping=(
+                on_ramp_mapping[start_idx:end_idx]
+                if on_ramp_mapping is not None
+                else None
+            ),
+            off_ramp_mapping=(
+                off_ramp_mapping[start_idx:end_idx]
+                if off_ramp_mapping is not None
+                else None
+            ),
+            time_varying_ramping=time_varying_ramping,
+            bounds=bounds,
+            initialization=initialization,
         )
 
         num_timesteps, num_segments = segment_v_hat.shape
@@ -557,7 +649,7 @@ def run_calibration(
             [value(res_model.n_lanes[i]) for i in range(num_segments)]
         )
         # if include_ramping:
-            # results["gamma"].extend([value(res_model.gamma[i]) for i in range(num_segments)])
+        # results["gamma"].extend([value(res_model.gamma[i]) for i in range(num_segments)])
         if time_varying_ramping:
             results["beta"] = np.ndarray((num_timesteps, num_segments))
             results["r_inflow"] = np.ndarray((num_timesteps, num_segments))
@@ -577,7 +669,7 @@ def run_calibration(
     for key in ["tau", "K", "eta_high", "rho_crit", "v_free", "a", "num_lanes"]:
         results[key] = np.array(results[key])
     # if include_ramping:
-        # results["gamma"] = np.array(results["gamma"])
+    # results["gamma"] = np.array(results["gamma"])
     results["beta"] = np.array(results["beta"])
     results["r_inflow"] = np.array(results["r_inflow"])
     return results
