@@ -94,6 +94,7 @@ def load_trajectories(
 
                 # Efficient min/max tracking
                 t_min = timestamps[0] if t_min is None else min(t_min, timestamps[0])
+                # print("Current trajectory start time:", pd.to_datetime(timestamps[0], unit="s"))
                 t_max = timestamps[0] if t_max is None else max(t_max, timestamps[0])
 
                 if (
@@ -304,9 +305,9 @@ def form_csv(
     print(f"CSV file saved as {output_filename}")
 
 
-
-def get_ramps_per_segment(ramps_path, space_interval=400, direction="west",
-                          min_pos=None, max_pos=None):
+def get_ramps_per_segment(
+    ramps_path, space_interval=400, direction="west", min_pos=None, max_pos=None
+):
     """
     Computes binary on/off ramp indicators per 400 m segment along the highway.
     Allows specifying a fixed spatial range via min_pos and max_pos (in meters).
@@ -335,9 +336,13 @@ def get_ramps_per_segment(ramps_path, space_interval=400, direction="west",
         in_bin = (ramps_df["x_m"] >= seg_start) & (ramps_df["x_m"] < seg_end)
 
         if in_bin.any():
-            if (ramps_df.loc[in_bin, "entry_node"].astype(str).str.upper() == "TRUE").any():
+            if (
+                ramps_df.loc[in_bin, "entry_node"].astype(str).str.upper() == "TRUE"
+            ).any():
                 on_ramp[i] = True
-            if (ramps_df.loc[in_bin, "exit_node"].astype(str).str.upper() == "TRUE").any():
+            if (
+                ramps_df.loc[in_bin, "exit_node"].astype(str).str.upper() == "TRUE"
+            ).any():
                 off_ramp[i] = True
 
     if direction == "west":
@@ -348,8 +353,10 @@ def get_ramps_per_segment(ramps_path, space_interval=400, direction="west",
 
     return on_ramp, off_ramp, space_bins, bin_midpoints_m
 
-def get_lanes_per_segment(lanes_path, space_interval=400, direction="west",
-                          min_pos=None, max_pos=None):
+
+def get_lanes_per_segment(
+    lanes_path, space_interval=400, direction="west", min_pos=None, max_pos=None
+):
     """
     Computes weighted average lane count for each 400 m segment along the highway.
     Allows specifying a fixed spatial range via min_pos and max_pos (in meters).
@@ -386,8 +393,9 @@ def get_lanes_per_segment(lanes_path, space_interval=400, direction="west",
             lanes_per_bin[i] = lanes_per_bin[i - 1] if i > 0 else np.nan
             continue
 
-        overlap_lengths = np.minimum(overlapping["x_max_m"], seg_end) \
-                        - np.maximum(overlapping["x_min_m"], seg_start)
+        overlap_lengths = np.minimum(overlapping["x_max_m"], seg_end) - np.maximum(
+            overlapping["x_min_m"], seg_start
+        )
         overlap_lengths = np.clip(overlap_lengths, 0, None)
 
         if np.any(overlap_lengths > 0):
@@ -403,11 +411,20 @@ def get_lanes_per_segment(lanes_path, space_interval=400, direction="west",
     return lanes_per_bin, space_bins, bin_midpoints_m
 
 
-def plot_simulation_comparison(rho_sim, v_sim, rho_true, v_true, q_true=None, include_fd=True, save_path=None, lanes=None):
+def plot_simulation_comparison(
+    rho_sim,
+    v_sim,
+    rho_true,
+    v_true,
+    q_true=None,
+    include_fd=True,
+    save_path=None,
+    lanes=None,
+):
     """
     Plot side-by-side comparison of simulated vs ground truth traffic states.
     Uses PREDICTED values for color scale (vmin/vmax) to make differences more visible.
-    
+
     Args:
         rho_sim: Simulated density (time_steps, num_segments) - TOTAL density
         v_sim: Simulated velocity (time_steps, num_segments)
@@ -422,7 +439,7 @@ def plot_simulation_comparison(rho_sim, v_sim, rho_true, v_true, q_true=None, in
     q_sim = rho_sim * v_sim
     if q_true is None:
         q_true = rho_true * v_true
-    
+
     # Create figure
     if include_fd:
         fig = plt.figure(figsize=(14, 18))
@@ -430,74 +447,104 @@ def plot_simulation_comparison(rho_sim, v_sim, rho_true, v_true, q_true=None, in
         axes = [[fig.add_subplot(gs[i, j]) for j in range(2)] for i in range(3)]
         ax_fd = fig.add_subplot(gs[3, :])
     else:
-        fig, axes = plt.subplots(3, 2, figsize=(14, 16), sharey='row')
-    
+        fig, axes = plt.subplots(3, 2, figsize=(14, 16), sharey="row")
+
     # --- Row 1: Velocity ---
     # USE PREDICTED VALUES FOR COLOR SCALE
     v_min = v_sim.min()
     v_max = v_sim.max()
-    
+
     im0 = axes[0][0].imshow(
-        v_sim.T, aspect="auto", origin="lower", cmap="RdYlGn", 
-        interpolation="none", vmin=v_min, vmax=v_max
+        v_sim.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdYlGn",
+        interpolation="none",
+        vmin=v_min,
+        vmax=v_max,
     )
     axes[0][0].set_xlabel("Time Step")
     axes[0][0].set_ylabel("Segment Index")
     axes[0][0].set_title("Predicted Velocity")
     fig.colorbar(im0, ax=axes[0][0], label="Velocity (km/h)")
-    
+
     im1 = axes[0][1].imshow(
-        v_true.T, aspect="auto", origin="lower", cmap="RdYlGn", 
-        interpolation="none", vmin=v_min, vmax=v_max
+        v_true.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdYlGn",
+        interpolation="none",
+        vmin=v_min,
+        vmax=v_max,
     )
     axes[0][1].set_xlabel("Time Step")
     axes[0][1].set_title("Ground Truth Velocity")
     fig.colorbar(im1, ax=axes[0][1], label="Velocity (km/h)")
-    
+
     # --- Row 2: Flow ---
     # USE PREDICTED VALUES FOR COLOR SCALE
     q_min = q_sim.min()
     q_max = q_sim.max()
-    
+
     im2 = axes[1][0].imshow(
-        q_sim.T, aspect="auto", origin="lower", cmap="RdYlGn", 
-        interpolation="none", vmin=q_min, vmax=q_max
+        q_sim.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdYlGn",
+        interpolation="none",
+        vmin=q_min,
+        vmax=q_max,
     )
     axes[1][0].set_xlabel("Time Step")
     axes[1][0].set_ylabel("Segment Index")
     axes[1][0].set_title("Predicted Flow")
     fig.colorbar(im2, ax=axes[1][0], label="Flow (veh/h)")
-    
+
     im3 = axes[1][1].imshow(
-        q_true.T, aspect="auto", origin="lower", cmap="RdYlGn", 
-        interpolation="none", vmin=q_min, vmax=q_max
+        q_true.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdYlGn",
+        interpolation="none",
+        vmin=q_min,
+        vmax=q_max,
     )
     axes[1][1].set_xlabel("Time Step")
     axes[1][1].set_title("Ground Truth Flow")
     fig.colorbar(im3, ax=axes[1][1], label="Flow (veh/h)")
-    
+
     # --- Row 3: Density ---
     # USE PREDICTED VALUES FOR COLOR SCALE
     rho_min = rho_sim.min()
     rho_max = rho_sim.max()
-    
+
     im4 = axes[2][0].imshow(
-        rho_sim.T, aspect="auto", origin="lower", cmap="RdYlGn", 
-        interpolation="none", vmin=rho_min, vmax=rho_max
+        rho_sim.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdYlGn",
+        interpolation="none",
+        vmin=rho_min,
+        vmax=rho_max,
     )
     axes[2][0].set_xlabel("Time Step")
     axes[2][0].set_ylabel("Segment Index")
     axes[2][0].set_title("Predicted Density")
     fig.colorbar(im4, ax=axes[2][0], label="Density (veh)")
-    
+
     im5 = axes[2][1].imshow(
-        rho_true.T, aspect="auto", origin="lower", cmap="RdYlGn", 
-        interpolation="none", vmin=rho_min, vmax=rho_max
+        rho_true.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdYlGn",
+        interpolation="none",
+        vmin=rho_min,
+        vmax=rho_max,
     )
     axes[2][1].set_xlabel("Time Step")
     axes[2][1].set_title("Ground Truth Density")
     fig.colorbar(im5, ax=axes[2][1], label="Density (veh)")
-    
+
     # --- Row 4: Fundamental Diagram ---
     if include_fd:
         # CRITICAL FIX: Convert TOTAL density to PER-LANE density for FD plot
@@ -506,11 +553,11 @@ def plot_simulation_comparison(rho_sim, v_sim, rho_true, v_true, q_true=None, in
             num_timesteps, num_segments = rho_sim.shape
             lanes_expanded_sim = np.tile(lanes, (num_timesteps, 1))
             lanes_expanded_true = np.tile(lanes, (rho_true.shape[0], 1))
-            
+
             # Convert to per-lane density
             rho_per_lane_sim = rho_sim / lanes_expanded_sim
             rho_per_lane_true = rho_true / lanes_expanded_true
-            
+
             all_rho_pred = rho_per_lane_sim.flatten()
             all_rho_true = rho_per_lane_true.flatten()
         else:
@@ -518,22 +565,64 @@ def plot_simulation_comparison(rho_sim, v_sim, rho_true, v_true, q_true=None, in
             print("WARNING: lanes not provided, assuming density is per-lane")
             all_rho_pred = rho_sim.flatten()
             all_rho_true = rho_true.flatten()
-        
+
         all_q_pred = q_sim.flatten()
         all_q_true = q_true.flatten()
-        
-        ax_fd.scatter(all_rho_true, all_q_true, color="gray", alpha=0.7, s=1, label="Data (measured)")
+
+        ax_fd.scatter(
+            all_rho_true,
+            all_q_true,
+            color="gray",
+            alpha=0.7,
+            s=1,
+            label="Data (measured)",
+        )
         ax_fd.scatter(all_rho_pred, all_q_pred, alpha=0.6, s=1, label="Predicted")
         ax_fd.set_xlabel("Density (veh/lane/km)")
         ax_fd.set_ylabel("Flow (veh/h)")
         ax_fd.set_title("Fundamental Diagram: Flow vs. Density (per lane)")
         ax_fd.legend()
         ax_fd.grid(True)
-    
+
     plt.tight_layout()
-    
+
     if save_path is not None:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"Figure saved to: {save_path}")
-    
+
     plt.show()
+
+
+def mape(flow_hat, flow_pred):
+    """
+    Compute the Mean Absolute Percentage Error (MAPE) between ground truth and prediction.
+
+    Parameters:
+        flow_hat (np.ndarray): Ground truth array of shape [t, i]
+        flow_pred (np.ndarray): Predicted array of shape [t, i]
+
+    Returns:
+        float: The mean absolute percentage error (in percent)
+    """
+    # Avoid division by zero by masking out zero ground truth values
+    mask = flow_hat != 0
+    # print(flow_hat.shape)
+    # print(flow_pred.shape)
+    error = np.abs((flow_pred[mask] - flow_hat[mask]) / flow_hat[mask])
+    return np.mean(error) * 100
+
+
+def rmse(flow_hat, flow_pred):
+    """
+    Compute the Root Mean Squared Error (RMSE) between ground truth and prediction.
+
+    Parameters:
+        flow_hat (np.ndarray): Ground truth array of shape [t, i]
+        flow_pred (np.ndarray): Predicted array of shape [t, i]
+
+    Returns:
+        float: The root mean squared error
+    """
+    error = flow_pred - flow_hat
+    mse = np.mean(np.square(error))
+    return np.sqrt(mse)
