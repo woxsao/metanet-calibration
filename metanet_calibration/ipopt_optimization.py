@@ -65,9 +65,6 @@ def metanet_param_fit(
     # Ensure no divide-by-zero
 
     num_timesteps, num_segments = v_hat.shape
-    print(num_timesteps, num_segments)
-    print(initial_flow_or.shape)
-    print(downstream_density.shape)
 
     model = ConcreteModel()
     model.t = RangeSet(0, num_timesteps - 1)
@@ -82,7 +79,6 @@ def metanet_param_fit(
 
     # Number of lanes (per calibrated segment)
     if lane_mapping is not None:
-        print(lane_mapping)
         model.n_lanes = Param(model.i, initialize={i: lane_mapping[i] for i in model.i})
     elif varylanes:
         model.n_lanes = Var(model.i, bounds=(3, 5), initialize=3)
@@ -197,10 +193,7 @@ def metanet_param_fit(
                     if off_ramp_mapping[i] == 0:
                         model.beta[i].setlb(0.0)
                         model.beta[i].setub(0.0)
-        # model.beta = Var(model.i, bounds=(0.0, 0.0), initialize=0.0)
-        # model.r_inflow = Var(model.i, bounds=(-2000, 2000), initialize=200)
-        # model.beta = Var(model.i, bounds=(-1.0, 1.0), initialize=0.5)
-        # model.r_inflow = Var(model.i, bounds=(0.0, 0.0), initialize=0.0)
+
     else:
         model.beta = Var(model.i, bounds=(0.0, 0.0), initialize=0.0)
         model.r_inflow = Var(model.i, bounds=(0.0, 0.0), initialize=0.0)
@@ -248,30 +241,6 @@ def metanet_param_fit(
         initialize={(t, i): float(q_hat[t, i]) for t in model.t for i in model.i},
     )
 
-    # Dynamics functions
-    # def density_dynamics(current, inflow, outflow, T, l, lanes, beta, r_inflow):
-    #     return current + T / l * (
-    #         inflow - outflow / (1 - beta) + r_inflow
-    #     ) # add r(t)- s(t)
-
-    # def calculate_V(m, rho, VSL, seg):
-    #     return m.v_free[seg] * pyo.exp(
-    #         -1 / m.a[seg] * (rho / m.rho_crit[seg]) ** m.a[seg]
-    #     )
-
-    # def velocity_dynamics(
-    #     m, current, prev_state, density, next_density, VSL, T, l, seg
-    # ):
-    #     tau = m.tau[seg]
-    #     eta = m.eta_high[seg]
-    #     K = m.K[seg]
-    #     v_eq = calculate_V(m, density, VSL, seg)
-    #     term1 = T / tau * (v_eq - current)
-    #     term2 = T / l * current * (prev_state - current)
-    #     term3 = (eta * T) / (tau * l) * (next_density - density) / (density + K)
-    #     return current + term1 + term2 - term3
-
-    # Density dynamics
     def rho_update(m, t, i):
         if t == 0:
             return Constraint.Skip
@@ -343,9 +312,6 @@ def metanet_param_fit(
             next_density = m.rho_pred[t - 1, i + 1]
             next_lanes = m.n_lanes[i + 1]
 
-        # return m.v_pred[t, i] == velocity_dynamics_MN(
-        #     m, current, prev_state, density, next_density, VSL, m.T, m.l, seg
-        # )
         args = {
             "current": current,
             "prev_state": prev_state,
@@ -367,22 +333,6 @@ def metanet_param_fit(
 
     model.v_dyn = Constraint(model.t, model.i, rule=v_update)
 
-    # every other segment
-    # def loss_fn(m):
-    #     # only sum every other segment
-    #     # find max values for normalization
-    #     v_max = max(m.v_hat[t, i] for t in m.t for i in m.i if i % 2 == 0)
-    #     rho_max = max(m.rho_hat[t, i] for t in m.t for i in m.i if i % 2 == 0)
-    #     q_max = max(m.q_hat[t, i] for t in m.t for i in m.i if i % 2 == 0)
-    #     return sum(
-    #         (((m.v_pred[t, i] - m.v_hat[t, i]) / v_max)) ** 2
-    #         + ((m.rho_pred[t, i] - m.rho_hat[t, i]) / rho_max) ** 2
-    #         + ((m.q_pred[t, i] - m.q_hat[t, i]) / q_max) ** 2
-    #         for t in m.t
-    #         for i in m.i
-    #         if i % 2 == 0
-    #     )
-
     # Objective: per-lane error
     def loss_fn(m):
         v_max = max(m.v_hat[t, i] for t in m.t for i in m.i)
@@ -396,49 +346,6 @@ def metanet_param_fit(
             for t in m.t
             for i in m.i
         )
-
-    # def loss_fn(m):
-    #     # --- Precompute max values for normalization ---
-    #     v_max = max(m.v_hat[t, i] for t in m.t for i in m.i)
-    #     rho_max = max(m.rho_hat[t, i] for t in m.t for i in m.i)
-    #     q_max = max(m.q_hat[t, i] for t in m.t for i in m.i)
-
-    #     # --- Precompute inflow_hat (fixed, based on data) ---
-    #     inflow_hat = np.zeros((num_timesteps, num_segments))
-    #     inflow_hat[:, 0] = q_hat[:, 0] - initial_flow_or[:, 0]
-    #     inflow_hat[:, 1:] = q_hat[:, 1:] - q_hat[:, :-1]
-
-    #     # --- Construct inflow_pred expression using Pyomo vars ---
-    #     inflow_pred_expr = {}
-    #     for t in m.t:
-    #         inflow_pred_expr[t, 0] = m.q_pred[t, 0] - initial_flow_or[t, 0]
-    #         for i in m.i:
-    #             if i > 0:
-    #                 inflow_pred_expr[t, i] = m.q_pred[t, i] - m.q_pred[t, i - 1]
-
-    #     # --- Loss expression ---
-    #     return sum(
-    #         20 * ((m.v_pred[t, i] - m.v_hat[t, i]) / v_max) ** 2
-    #         + ((m.rho_pred[t, i] - m.rho_hat[t, i]) / rho_max) ** 2
-    #         + ((inflow_pred_expr[t, i] - inflow_hat[t, i]) / q_max) ** 2
-    #         for t in m.t
-    #         for i in m.i
-    #     )
-
-    # def loss_fn(m):
-    #     return sum(
-    #         (m.v_pred[t, i] - m.v_hat[t, i])**2 #+ (m.rho_pred[t, i] - m.rho_hat[t, i])**2 + (m.q_pred[t, i] - m.q_hat[t, i])**2
-    #         for t in m.t
-    #         for i in m.i
-    #     )
-    # def loss_fn(m):
-    #     selected_segments = {3, 6, 9}  # segments to include
-    #     return sum(
-    #         (m.v_pred[t, i] - m.v_hat[t, i])**2 #+ (m.rho_pred[t, i] - m.rho_hat[t, i])**2 + (m.q_pred[t, i] - m.q_hat[t, i])**2
-    #         for t in m.t
-    #         for i in m.i
-    #         if i in selected_segments
-    #     )
 
     model.loss = Objective(rule=loss_fn, sense=minimize)
 
@@ -500,9 +407,7 @@ def run_calibration(
     """
 
     v_hat = q_hat / rho_hat
-    # v_hat = np.where(v_hat == 0.0, 1e-3, v_hat)
 
-    # Initialize results storage
     results = {
         "v_pred": [],
         "rho_pred": [],
@@ -648,8 +553,7 @@ def run_calibration(
         results["num_lanes"].extend(
             [value(res_model.n_lanes[i]) for i in range(num_segments)]
         )
-        # if include_ramping:
-        # results["gamma"].extend([value(res_model.gamma[i]) for i in range(num_segments)])
+
         if time_varying_ramping:
             results["beta"] = np.ndarray((num_timesteps, num_segments))
             results["r_inflow"] = np.ndarray((num_timesteps, num_segments))
@@ -668,8 +572,6 @@ def run_calibration(
     # Convert parameter lists to numpy arrays
     for key in ["tau", "K", "eta_high", "rho_crit", "v_free", "a", "num_lanes"]:
         results[key] = np.array(results[key])
-    # if include_ramping:
-    # results["gamma"] = np.array(results["gamma"])
     results["beta"] = np.array(results["beta"])
     results["r_inflow"] = np.array(results["r_inflow"])
     return results
@@ -688,8 +590,7 @@ def mape(flow_hat, flow_pred):
     """
     # Avoid division by zero by masking out zero ground truth values
     mask = flow_hat != 0
-    # print(flow_hat.shape)
-    # print(flow_pred.shape)
+
     error = np.abs((flow_pred[mask] - flow_hat[mask]) / flow_hat[mask])
     return np.mean(error) * 100
 
