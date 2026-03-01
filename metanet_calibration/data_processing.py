@@ -463,9 +463,9 @@ def plot_simulation_comparison(
         vmin=v_min,
         vmax=v_max,
     )
-    axes[0][0].set_xlabel("Time Step")
-    axes[0][0].set_ylabel("Segment Index")
-    axes[0][0].set_title("Predicted Velocity")
+    axes[0][0].set_xlabel("Time Step", fontsize=18)
+    axes[0][0].set_ylabel("Segment Index", fontsize=18)
+    axes[0][0].set_title("Predicted Velocity", fontsize=18)
     fig.colorbar(im0, ax=axes[0][0], label="Velocity (km/h)")
 
     im1 = axes[0][1].imshow(
@@ -477,8 +477,8 @@ def plot_simulation_comparison(
         vmin=v_min,
         vmax=v_max,
     )
-    axes[0][1].set_xlabel("Time Step")
-    axes[0][1].set_title("Ground Truth Velocity")
+    axes[0][1].set_xlabel("Time Step", fontsize=18)
+    axes[0][1].set_title("Ground Truth Velocity", fontsize=18)
     fig.colorbar(im1, ax=axes[0][1], label="Velocity (km/h)")
 
     # --- Row 2: Flow ---
@@ -495,9 +495,9 @@ def plot_simulation_comparison(
         vmin=q_min,
         vmax=q_max,
     )
-    axes[1][0].set_xlabel("Time Step")
-    axes[1][0].set_ylabel("Segment Index")
-    axes[1][0].set_title("Predicted Flow")
+    axes[1][0].set_xlabel("Time Step", fontsize=18)
+    axes[1][0].set_ylabel("Segment Index", fontsize=18)
+    axes[1][0].set_title("Predicted Flow", fontsize=18)
     fig.colorbar(im2, ax=axes[1][0], label="Flow (veh/h)")
 
     im3 = axes[1][1].imshow(
@@ -509,8 +509,8 @@ def plot_simulation_comparison(
         vmin=q_min,
         vmax=q_max,
     )
-    axes[1][1].set_xlabel("Time Step")
-    axes[1][1].set_title("Ground Truth Flow")
+    axes[1][1].set_xlabel("Time Step", fontsize=18)
+    axes[1][1].set_title("Ground Truth Flow", fontsize=18)
     fig.colorbar(im3, ax=axes[1][1], label="Flow (veh/h)")
 
     # --- Row 3: Density ---
@@ -527,9 +527,9 @@ def plot_simulation_comparison(
         vmin=rho_min,
         vmax=rho_max,
     )
-    axes[2][0].set_xlabel("Time Step")
-    axes[2][0].set_ylabel("Segment Index")
-    axes[2][0].set_title("Predicted Density")
+    axes[2][0].set_xlabel("Time Step", fontsize=18)
+    axes[2][0].set_ylabel("Segment Index", fontsize=18)
+    axes[2][0].set_title("Predicted Density", fontsize=18)
     fig.colorbar(im4, ax=axes[2][0], label="Density (veh)")
 
     im5 = axes[2][1].imshow(
@@ -541,8 +541,8 @@ def plot_simulation_comparison(
         vmin=rho_min,
         vmax=rho_max,
     )
-    axes[2][1].set_xlabel("Time Step")
-    axes[2][1].set_title("Ground Truth Density")
+    axes[2][1].set_xlabel("Time Step", fontsize=18)
+    axes[2][1].set_title("Ground Truth Density", fontsize=18)
     fig.colorbar(im5, ax=axes[2][1], label="Density (veh)")
 
     # --- Row 4: Fundamental Diagram ---
@@ -578,9 +578,9 @@ def plot_simulation_comparison(
             label="Data (measured)",
         )
         ax_fd.scatter(all_rho_pred, all_q_pred, alpha=0.6, s=1, label="Predicted")
-        ax_fd.set_xlabel("Density (veh/lane/km)")
-        ax_fd.set_ylabel("Flow (veh/h)")
-        ax_fd.set_title("Fundamental Diagram: Flow vs. Density (per lane)")
+        ax_fd.set_xlabel("Density (veh/km)", fontsize=18)
+        ax_fd.set_ylabel("Flow (veh/h)", fontsize=18)
+        ax_fd.set_title("Fundamental Diagram: Flow vs. Density", fontsize=18)
         ax_fd.legend()
         ax_fd.grid(True)
 
