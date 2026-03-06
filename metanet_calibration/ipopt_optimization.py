@@ -10,10 +10,13 @@ from pyomo.environ import (
     value,
     Constraint,
     ConstraintList,
+    Expression,
+    NonNegativeReals
 )
+import pyomo.environ as pyo
 
 from .metanet_dynamics import density_dynamics, velocity_dynamics_MN
-
+from matplotlib import pyplot as plt
 
 def smooth_inflow(inflow, window_size=2):
     # Create averaging kernel
@@ -35,7 +38,150 @@ def smooth_inflow(inflow, window_size=2):
     )
     return smoothed
 
+def fit_fd1(
+    flattened_rho_hat,
+    flattened_q_hat,
+    C_i=None,
+    V_free_init=60,
+    a_init=1.0,
+    solver_name="ipopt",
+    plot=True,
+    top_k_for_C=5,
+):
+    """
+    Fit a smooth FD1 fundamental diagram to (rho_hat, q_hat) data using Pyomo.
+    Uses an asymmetric (envelope) objective so the curve fits the *upper boundary*
+    of the scatter, and constrains the curve peak to exactly equal C_i.
 
+    Parameters
+    ----------
+    flattened_rho_hat : array-like
+        Density measurements (veh/km).
+    flattened_q_hat : array-like
+        Flow measurements (veh/h).
+    C_i : float or None
+        Fixed capacity value. If None, capacity is estimated from the top K flows.
+    V_free_init : float
+        Initial guess for free-flow speed.
+    a_init : float
+        Initial guess for shape parameter a.
+    solver_name : str
+        Solver to use (default: 'ipopt').
+    plot : bool
+        Whether to plot the fitted curve and data.
+    top_k_for_C : int
+        Number of top flow values to average for capacity estimate if C_i is None.
+
+    Returns
+    -------
+    dict
+        Optimized parameters {'rho_crit', 'V_free', 'a', 'C'}.
+    """
+
+    flattened_rho_hat = np.array(flattened_rho_hat)
+    flattened_q_hat = np.array(flattened_q_hat)
+    K = len(flattened_rho_hat)
+
+    # Estimate capacity if not provided
+    if C_i is None:
+        C_i = np.mean(sorted(flattened_q_hat)[-top_k_for_C:])
+
+    # Build Pyomo model
+    model = ConcreteModel()
+    model.k = RangeSet(0, K - 1)
+
+    # Parameters
+    model.rho_hat = Param(model.k, initialize=dict(enumerate(flattened_rho_hat)))
+    model.q_hat   = Param(model.k, initialize=dict(enumerate(flattened_q_hat)))
+    model.C       = Param(initialize=C_i)
+
+    # Decision variables
+    model.rho_crit = Var(
+        bounds=(1e-2, max(flattened_rho_hat)),
+        initialize=np.median(flattened_rho_hat),
+    )
+    model.V_free = Var(bounds=(10, 150), initialize=V_free_init)
+    model.a      = Var(bounds=(0.01, 10), initialize=a_init)
+
+    # ── FD1 expression ────────────────────────────────────────────────────────
+    # q(ρ) = ρ · V_free · exp(−(ρ/ρ_crit)^a / a)
+    # Peak is at ρ = ρ_crit  →  q_peak = ρ_crit · V_free · exp(−1/a)
+    def q_pred_expr(model, k):
+        rho = model.rho_hat[k]
+        return rho * model.V_free * pyo.exp(-1 / model.a * (rho / model.rho_crit) ** model.a)
+
+    model.q_pred = Expression(model.k, rule=q_pred_expr)
+
+    # ── Peak constraint: force q(ρ_crit) = C_i ────────────────────────────────
+    # Substituting ρ = ρ_crit into the formula gives:
+    #   q_peak = ρ_crit · V_free · exp(−1/a)  =  C_i
+    def peak_at_capacity(model):
+        return model.rho_crit * model.V_free * pyo.exp(-1 / model.a) == model.C
+
+    model.peak_con = Constraint(rule=peak_at_capacity)
+
+    # ── Asymmetric (envelope) objective ───────────────────────────────────────
+    # Introduce non-negative slack variables s_k ≥ q_hat[k] − q_pred[k].
+    # Minimising Σ s_k² pushes the curve *up* to envelope the data from above
+    # instead of splitting it down the middle.
+    #
+    # Points already below the curve contribute 0 (slack stays at 0).
+    # Points above the curve are penalised quadratically.
+    model.slack = Var(model.k, within=NonNegativeReals, initialize=0.0)
+
+    def slack_upper_bound(model, k):
+        # slack[k]  ≥  q_hat[k] − q_pred[k]   (active only when data > curve)
+        return model.slack[k] >= model.q_hat[k] - model.q_pred[k]
+
+    model.slack_con = Constraint(model.k, rule=slack_upper_bound)
+
+    def obj_rule(model):
+        return sum(model.slack[k] ** 2 for k in model.k)
+
+    model.obj = Objective(rule=obj_rule, sense=minimize)
+
+    # Solve
+    solver = SolverFactory(solver_name)
+    solver.solve(model, tee=False)
+
+    # Extract results
+    rho_crit_opt = value(model.rho_crit)
+    V_free_opt   = value(model.V_free)
+    a_opt        = value(model.a)
+    C_opt        = value(model.C)
+
+    def Q_fd1(rho):
+        rho = np.array(rho)
+        return V_free_opt * rho * np.exp(-1 / a_opt * (rho / rho_crit_opt) ** a_opt)
+
+    # Plot
+    if plot:
+        rho_range = np.linspace(0, max(flattened_rho_hat) * 1.1, 500)
+        q_fit = Q_fd1(rho_range)
+
+        plt.figure(figsize=(8, 6))
+        plt.scatter(
+            flattened_rho_hat, flattened_q_hat,
+            color="gray", alpha=0.5, label="Data", s=1,
+        )
+        plt.plot(rho_range, q_fit, linewidth=2.5, label="Fitted FD1 (envelope)", zorder=10)
+        plt.axvline(rho_crit_opt, color="red",  linestyle="--", label=f"ρ_crit = {rho_crit_opt:.1f}")
+        plt.axhline(C_opt,        color="blue", linestyle=":",  label=f"C = {C_opt:.1f}")
+        plt.xlabel("Density ρ (veh/km)")
+        plt.ylabel("Flow q (veh/h)")
+        plt.title("Fundamental Diagram Fit (FD1) — Envelope")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+    return {
+        "rho_crit": rho_crit_opt,
+        "V_free":   V_free_opt,
+        "a":        a_opt,
+        "C":        C_opt,
+        "Q_fd1":    Q_fd1,
+    }
 def metanet_param_fit(
     v_hat,
     rho_hat,
@@ -50,6 +196,8 @@ def metanet_param_fit(
     lane_mapping=None,
     on_ramp_mapping=None,
     off_ramp_mapping=None,
+    on_ramp_flows_gt=None,
+    off_ramp_flows_gt=None,
     time_varying_ramping=False,
     bounds=None,
     initialization=None,
@@ -111,9 +259,26 @@ def metanet_param_fit(
         "beta": 1e-3,
         "r_inflow": 1e-3,
     }
+    if time_varying_ramping:
+        combined_initialization["beta"] = np.full((num_timesteps, num_segments), combined_initialization["beta"])
+        combined_initialization["r_inflow"] = np.full(
+            (num_timesteps, num_segments), combined_initialization["r_inflow"]
+        )
+        if on_ramp_flows_gt is not None:
+            print("Using on-ramp flow ground truth for r_inflow initialization")
+            combined_initialization["r_inflow"] = on_ramp_flows_gt
+        if off_ramp_flows_gt is not None:
+            print("Using off-ramp flow ground truth for beta initialization")
+            combined_initialization["beta"] = off_ramp_flows_gt
     if initialization is not None:
         print("Using custom initialization from input")
         combined_initialization.update(initialization)
+    if not time_varying_ramping:
+        for key in ("beta", "r_inflow"):
+            val = combined_initialization[key]
+            if hasattr(val, "ndim") and val.ndim > 0:
+                # collapse to a scalar (take the mean, or first element)
+                combined_initialization[key] = float(np.mean(val))
     model.eta_high = Var(
         model.i,
         bounds=combined_bounds["eta_high"],
@@ -143,39 +308,79 @@ def metanet_param_fit(
 
     if include_ramping:
         # model.gamma = Var(model.i, bounds=(0.5, 1.5), initialize=1)
-        model.beta = Var(
-            model.i,
-            bounds=combined_bounds["beta"],
-            initialize=combined_initialization["beta"],
-        )
-        model.r_inflow = Var(
-            model.i,
-            bounds=combined_bounds["r_inflow"],
-            initialize=combined_initialization["r_inflow"],
-        )
+        if not time_varying_ramping:
+            model.beta = Var(
+                model.i,
+                bounds=combined_bounds["beta"],
+                initialize=combined_initialization["beta"],
+            )
+            model.r_inflow = Var(
+                model.i,
+                bounds=combined_bounds["r_inflow"],
+                initialize=combined_initialization["r_inflow"],
+            )
         if on_ramp_mapping is not None and off_ramp_mapping is not None:
 
             if time_varying_ramping:
-                model.beta = Var(
-                    model.t,
-                    model.i,
-                    bounds=combined_bounds["beta"],
-                    initialize={
-                        (t, i): combined_initialization["beta"]
-                        for t in model.t
-                        for i in model.i
-                    },
-                )
-                model.r_inflow = Var(
-                    model.t,
-                    model.i,
-                    bounds=combined_bounds["r_inflow"],
-                    initialize={
-                        (t, i): combined_initialization["beta"]
-                        for t in model.t
-                        for i in model.i
-                    },
-                )
+                if on_ramp_flows_gt is not None:
+                    model.r_inflow = Var(
+                        model.t,
+                        model.i,
+                        bounds={
+                            (t, i): (
+                                combined_initialization["r_inflow"][t, i],
+                                combined_initialization["r_inflow"][t, i],
+                            )
+                            for t in model.t
+                            for i in model.i
+                        },
+                        initialize={
+                            (t, i): combined_initialization["r_inflow"][t, i]
+                            for t in model.t
+                            for i in model.i
+                        },
+                    )
+                else:
+                    model.r_inflow = Var(
+                        model.t,
+                        model.i,
+                        bounds=combined_bounds["r_inflow"],
+                        initialize={
+                            (t, i): combined_initialization["r_inflow"][t, i]
+                            for t in model.t
+                            for i in model.i
+                        },
+                    )
+                if off_ramp_flows_gt is not None:
+                    model.beta = Var(
+                        model.t,
+                        model.i,
+                        bounds={
+                            (t, i): (
+                                combined_initialization["beta"][t, i],
+                                combined_initialization["beta"][t, i],
+                            )
+                            for t in model.t
+                            for i in model.i
+                        },
+                        initialize={
+                            (t, i): combined_initialization["beta"][t, i]
+                            for t in model.t
+                            for i in model.i
+                        },
+                    )
+                else:
+                    model.beta = Var(
+                        model.t,
+                        model.i,
+                        bounds=combined_bounds["beta"],
+                        initialize={
+                            (t, i): combined_initialization["beta"][t, i]
+                            for t in model.t
+                            for i in model.i
+                        },
+                    )
+                
                 for t in model.t:
                     for i in model.i:
                         if on_ramp_mapping[i] == 0:
@@ -359,7 +564,7 @@ def metanet_param_fit(
     # solver.options["compl_inf_tol"] = 1e-10
     solver.options["max_iter"] = 20000
     solver.options["acceptable_constr_viol_tol"] = 1e-30
-    solver.options["constr_viol_tol"] = 1e-15
+    solver.options["constr_viol_tol"] = 1e-13
     # solver.options["dual_inf_tol"] = 1e-11
     # solver.options["acceptable_dual_inf_tol"] = 1e-11
     solver.solve(model, tee=True)
@@ -379,6 +584,8 @@ def run_calibration(
     lane_mapping=None,
     on_ramp_mapping=None,
     off_ramp_mapping=None,
+    on_ramp_flows_gt=None,
+    off_ramp_flows_gt=None,
     smoothing=True,
     time_varying_ramping=False,
     bounds=None,
@@ -508,6 +715,16 @@ def run_calibration(
             off_ramp_mapping=(
                 off_ramp_mapping[start_idx:end_idx]
                 if off_ramp_mapping is not None
+                else None
+            ),
+            on_ramp_flows_gt=(
+                on_ramp_flows_gt[:, start_idx:end_idx]
+                if on_ramp_flows_gt is not None
+                else None
+            ),
+            off_ramp_flows_gt=(
+                off_ramp_flows_gt[:, start_idx:end_idx]
+                if off_ramp_flows_gt is not None
                 else None
             ),
             time_varying_ramping=time_varying_ramping,
