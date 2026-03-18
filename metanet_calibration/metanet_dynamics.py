@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Dict, Tuple, Optional
+from numba import njit
 
 # ----------------------------
 # Core METANET helper functions (Total Density Version)
@@ -147,7 +148,7 @@ def _get_time_space_param(param, t: int, i: int):
     # assume 2D
     return float(param[t, i])
 
-
+@njit
 def metanet_step(
     t: int,
     density_t: np.ndarray,
