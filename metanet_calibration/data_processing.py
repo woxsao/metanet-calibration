@@ -545,9 +545,7 @@ def plot_simulation_comparison(
     axes[2][1].set_title("Ground Truth Density", fontsize=18)
     fig.colorbar(im5, ax=axes[2][1], label="Density (veh)")
 
-    # --- Row 4: Fundamental Diagram ---
     if include_fd:
-        # CRITICAL FIX: Convert TOTAL density to PER-LANE density for FD plot
         if lanes is not None:
             # Expand lanes to match shape
             num_timesteps, num_segments = rho_sim.shape
@@ -561,8 +559,7 @@ def plot_simulation_comparison(
             all_rho_pred = rho_per_lane_sim.flatten()
             all_rho_true = rho_per_lane_true.flatten()
         else:
-            # Fallback: assume data is already per-lane (but warn)
-            print("WARNING: lanes not provided, assuming density is per-lane")
+            print("WARNING: lanes not provided, assuming density is across all lanes")
             all_rho_pred = rho_sim.flatten()
             all_rho_true = rho_true.flatten()
 
@@ -626,3 +623,120 @@ def rmse(flow_hat, flow_pred):
     error = flow_pred - flow_hat
     mse = np.mean(np.square(error))
     return np.sqrt(mse)
+
+def plot_velocity(
+    rho_sim,
+    v_sim,
+    rho_true,
+    v_true,
+    q_true=None,
+    include_fd=True,
+    save_path=None,
+    lanes=None,
+):
+    """
+    Plot side-by-side comparison of simulated vs ground truth traffic states.
+    Uses PREDICTED values for color scale (vmin/vmax) to make differences more visible.
+
+    Args:
+        rho_sim: Simulated density (time_steps, num_segments) - TOTAL density
+        v_sim: Simulated velocity (time_steps, num_segments)
+        rho_true: Ground truth density (time_steps, num_segments) - TOTAL density
+        v_true: Ground truth velocity (time_steps, num_segments)
+        q_true: Ground truth flow (time_steps, num_segments), optional
+        include_fd: If True, add fundamental diagram plot at bottom
+        save_path: Path to save figure
+        lanes: Array of lanes per segment (needed for FD conversion)
+    """
+    # Compute flows
+    q_sim = rho_sim * v_sim
+    if q_true is None:
+        q_true = rho_true * v_true
+
+    # Create figure
+    if include_fd:
+        fig = plt.figure(figsize=(14, 10))
+        gs = fig.add_gridspec(2, 2, height_ratios=[1, 0.8])
+        axes = [[fig.add_subplot(gs[i, j]) for j in range(2)] for i in range(1)]
+        ax_fd = fig.add_subplot(gs[1, :])
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 10), sharey="row")
+
+    v_min = v_true.min()
+    v_max = v_true.max()
+
+    im0 = axes[0][0].imshow(
+        v_sim.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdYlGn",
+        interpolation="none",
+        vmin=v_min,
+        vmax=v_max,
+    )
+    axes[0][0].set_xlabel("Time Step", fontsize=24)
+    axes[0][0].set_ylabel("Segment Index", fontsize=24)
+    axes[0][0].set_title("Predicted Velocity (km/h)", fontsize=24)
+    axes[0][0].tick_params(axis="both", labelsize=18)
+
+    cbar1 = fig.colorbar(im0, ax=axes[0][0])
+    cbar1.ax.tick_params(labelsize=24)
+    im1 = axes[0][1].imshow(
+        v_true.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdYlGn",
+        interpolation="none",
+        vmin=v_min,
+        vmax=v_max,
+    )
+    axes[0][1].set_xlabel("Time Step", fontsize=24)
+    axes[0][1].set_title("Ground Truth Velocity (km/h)", fontsize=24)
+    axes[0][1].tick_params(axis="both", labelsize=18)
+    cbar = fig.colorbar(im1, ax=axes[0][1])
+    cbar.ax.tick_params(labelsize=24)
+
+    if include_fd:
+        if lanes is not None:
+            num_timesteps, num_segments = rho_sim.shape
+            lanes_expanded_sim = np.tile(lanes, (num_timesteps, 1))
+            lanes_expanded_true = np.tile(lanes, (rho_true.shape[0], 1))
+
+            rho_per_lane_sim = rho_sim / lanes_expanded_sim
+            rho_per_lane_true = rho_true / lanes_expanded_true
+
+            all_rho_pred = rho_per_lane_sim.flatten()
+            all_rho_true = rho_per_lane_true.flatten()
+        else:
+            print("WARNING: lanes not provided, assuming density is across all lanes")
+            all_rho_pred = rho_sim.flatten()
+            all_rho_true = rho_true.flatten()
+
+        all_q_pred = q_sim.flatten()
+        all_q_true = q_true.flatten()
+
+        ax_fd.scatter(
+            all_rho_true,
+            all_q_true,
+            color="black",
+            alpha=0.7,
+            s=4,
+            label="Data (measured)",
+        )
+        ax_fd.scatter(
+            all_rho_pred, all_q_pred, alpha=0.6, s=4, color="magenta", label="Predicted"
+        )
+        ax_fd.set_xlabel("Density (veh/km)", fontsize=24)
+        ax_fd.set_ylabel("Flow (veh/h)", fontsize=24)
+        ax_fd.tick_params(axis="both", labelsize=18)
+        ax_fd.set_title("Fundamental Diagram: Flow vs. Density", fontsize=24)
+        ax_fd.legend(fontsize=24)
+        ax_fd.grid(True)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        print(f"Figure saved to: {save_path}")
+
+
